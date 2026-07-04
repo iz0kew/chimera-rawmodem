@@ -1,0 +1,4 @@
+# Everything deployed to the Dragino (shell/init scripts, Python daemons)
+# must keep LF line endings — CRLF breaks them on OpenWrt. Force LF on
+# checkout everywhere, including Windows clones.
+* text=auto eol=lf

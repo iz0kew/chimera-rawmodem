@@ -1,0 +1,29 @@
+# Local development brief — must never be committed (project convention, see docs)
+CLAUDE.md
+.claude/
+
+# Real, in-use configuration files (create locally from config/*.example.*)
+config/config.yaml
+config/aprs-is.conf
+*.local.yaml
+*.local.conf
+
+# Build artifacts
+build/
+*.hex
+*.elf
+*.bin
+*.o
+*.d
+# ...except the prebuilt firmware images shipped with the repo
+!firmware/atmega328p-modem/prebuilt/*.hex
+# ...and the init.d directory, which *.d would otherwise swallow
+!openwrt/init.d/
+__pycache__/
+*.pyc
+.pio/
+.vscode/
+.idea/
+
+# OpenWrt SDK checkout (large, not project source)
+openwrt_lede-18.06/

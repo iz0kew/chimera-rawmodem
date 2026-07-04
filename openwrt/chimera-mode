@@ -1,0 +1,93 @@
+#!/bin/sh
+# chimera-rawmodem — switch the LG01-P between operating personalities.
+#
+#   chimera-mode aprs        digipeater + iGate on, APRS radio profile
+#   chimera-mode tnc         pure KISS TNC (digipeater/iGate off), APRS profile
+#   chimera-mode reticulum   Reticulum modem (digipeater/iGate off)
+#   chimera-mode status      show current mode, services and radio profile
+#
+# Install: copy to /usr/bin/chimera-mode, chmod +x.
+# The choice is persistent: config + rc.d state survive reboot/power loss.
+
+CONF=/etc/chimera/config.yaml
+
+usage() {
+	echo "usage: chimera-mode aprs|tnc|reticulum|status"
+	exit 1
+}
+
+# Rewrite mode: and the enabled: flag of the digipeater/igate sections,
+# leaving everything else (comments included) untouched.
+set_config() {
+	# $1 = mode value, $2 = true|false for digipeater+igate
+	awk -v mode="$1" -v en="$2" '
+		/^[^ \t]/       { section = $1; sub(":.*", "", section) }
+		/^mode:/        { print "mode: " mode; next }
+		/^[ \t]+enabled:/ && (section == "digipeater" || section == "igate") {
+			print "  enabled: " en; next
+		}
+		{ print }
+	' "$CONF" > "$CONF.tmp" && mv "$CONF.tmp" "$CONF"
+}
+
+# Note: on this OpenWrt (CC 15.05.1) enable/disable return non-zero even on
+# success — never chain them with &&.
+services_on() {
+	/etc/init.d/chimera-digipeater enable
+	/etc/init.d/chimera-igate enable
+	/etc/init.d/chimera-digipeater start
+	/etc/init.d/chimera-igate start
+}
+
+services_off() {
+	/etc/init.d/chimera-digipeater stop
+	/etc/init.d/chimera-igate stop
+	/etc/init.d/chimera-digipeater disable
+	/etc/init.d/chimera-igate disable
+}
+
+show_status() {
+	echo "mode:     $(sed -n 's/^mode: *//p' "$CONF")"
+	for svc in bridge digipeater igate; do
+		if ls /etc/rc.d/ | grep -q "chimera-$svc\$"; then boot="boot:on "; else boot="boot:off"; fi
+		if ps w | grep "chimera-$svc.py" | grep -qv grep; then run="running"; else run="stopped"; fi
+		echo "$svc: $boot $run"
+	done
+	echo "profile:  $(logread | grep 'radio profile pushed' | tail -n 1 | sed 's/.*pushed: //')"
+	netstat -tln 2>/dev/null | grep -q ':8001 ' && echo "port 8001: LISTEN" || echo "port 8001: NOT listening"
+}
+
+case "$1" in
+	aprs)
+		set_config aprs true
+		services_on
+		;;
+	tnc)
+		set_config tnc false
+		services_off
+		;;
+	reticulum)
+		set_config reticulum false
+		services_off
+		;;
+	status)
+		show_status
+		exit 0
+		;;
+	*)
+		usage
+		;;
+esac
+
+/etc/init.d/chimera-bridge restart
+# Wait for the bridge to come up (it binds the port first, then opens the
+# serial link: 2 s ATmega settle + profile push), then show what actually
+# got applied.
+n=0
+while [ $n -lt 20 ]; do
+	netstat -tln 2>/dev/null | grep -q ':8001 ' && break
+	sleep 1; n=$((n+1))
+done
+sleep 4
+echo "--- switched to $1 ---"
+show_status

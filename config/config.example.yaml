@@ -1,0 +1,75 @@
+# chimera-rawmodem — example configuration
+#
+# Copy to config.yaml, edit, and place in /etc/chimera/ on the Dragino.
+# config.yaml (the real copy) is gitignored — NEVER commit it.
+#
+# Format note: this file is parsed by a deliberately minimal loader on the
+# device (the on-device Python has no yaml module). Stick to the two-level
+# "section: / key: value" structure shown here; no lists, no nesting deeper
+# than one level. It remains valid YAML for editor highlighting.
+
+serial:
+  device: /dev/ttyATH0    # AR9331 UART to the ATmega328P (Yún-style link)
+  baud: 115200
+
+bridge:
+  listen_host: 0.0.0.0
+  listen_port: 8001
+  # Allow TCP clients to send radio config commands (0x10-0x16) to the
+  # modem. Keep off unless you know you need it.
+  allow_client_config: false
+
+# Active mode: tnc | aprs | reticulum
+# Selects which radio_* profile the bridge pushes to the modem at startup.
+mode: tnc
+
+# --- Radio profiles ---------------------------------------------------
+# tx_power_dbm: check your local band plan / license class before raising.
+# sync_word: 0x12 is the SX127x "private LoRa" default, and it is also what
+# RNode firmware uses (verified 2026-07 against markqvist/RNode_Firmware,
+# sx127x.cpp: SYNC_WORD_7X 0x12) — keep it for RNode interoperability.
+
+radio_tnc:                 # EU LoRa APRS convention — verify local band plan
+  frequency_hz: 433775000
+  bandwidth_hz: 125000
+  spreading_factor: 12
+  coding_rate: 5           # denominator: 5 = CR4/5 ... 8 = CR4/8
+  tx_power_dbm: 10
+  sync_word: 0x12
+  preamble_symbols: 8
+
+radio_aprs:                # same defaults as TNC mode
+  frequency_hz: 433775000
+  bandwidth_hz: 125000
+  spreading_factor: 12
+  coding_rate: 5
+  tx_power_dbm: 10
+  sync_word: 0x12
+  preamble_symbols: 8
+
+radio_reticulum:
+  frequency_hz: 433500000  # keep clear of the APRS frequency
+  bandwidth_hz: 125000
+  spreading_factor: 8      # throughput/range tradeoff, must match the RNodes
+  coding_rate: 5
+  tx_power_dbm: 10
+  sync_word: 0x12          # RNode default, verified — see comment above
+  # RNode firmware computes the preamble dynamically: max(24 ms of symbols,
+  # 18 symbols). At SF8/BW125 (2.048 ms/symbol) and any slower profile that
+  # resolves to the 18-symbol minimum — mirror it so our TX looks identical.
+  preamble_symbols: 18
+
+# --- APRS mode sub-features (independently toggleable, §4.2) -----------
+
+digipeater:
+  enabled: true
+  callsign: N0CALL-1       # YOUR callsign-SSID — daemon refuses N0CALL*
+  bridge_host: 127.0.0.1
+  dedupe_seconds: 30
+
+igate:
+  enabled: false           # off by default: digipeater works with no internet
+  bridge_host: 127.0.0.1
+  server: euro.aprs2.net   # regional rotate address — do not pin one server
+  port: 14580
+  # callsign + passcode live in aprs-is.conf (see aprs-is.example.conf)

@@ -1,0 +1,198 @@
+# Architecture
+
+## Overview
+
+One device, three interoperable personalities, sharing a single "raw radio
+modem" firmware layer. Mode switching is runtime configuration — no reflash.
+
+```
+                          Dragino LG01-P
+            ┌──────────────────────────────────────────┐
+            │  AR9331 (OpenWrt/Linux)   ATmega328P      │
+ Ethernet/  │  ┌──────────────────┐    ┌────────────┐  │      433MHz
+ WiFi       │  │ chimera-bridge   │UART│ atmega328p │  │   ┌─────────┐
+◄───TCP────►│  │ (KISS TCP server)│◄──►│ -modem.ino │◄─┼──►│ SX1276  │──► RF
+            │  └───────┬──────────┘115k│ (RH_RF95)  │SPI│  │ /RFM95  │
+            │          │ TCP (local)   └────────────┘  │   └─────────┘
+            │  ┌───────┴──────────┐                    │
+            │  │ digipeater.py    │  (each an ordinary │
+            │  │ igate.py         │   TCP client of    │
+            │  └──────────────────┘   the bridge)      │
+            └──────────────────────────────────────────┘
+                     ▲
+        TCP clients: │ KISS APRS clients (Xastir, YAAC, APRSIS32…)
+                     │ ChimeraInterface.py (RNS host: rnsd/MeshChat/Sideband)
+```
+
+Layering rule (project convention §9): the ATmega328P sketch and the bridge
+are "dumb" byte movers. Protocol/business logic (APRS path handling, APRS-IS
+formatting, RNS framing) lives in the per-function daemons or on the
+external host.
+
+## Modes
+
+- **TNC**: an external KISS client connects to the bridge TCP port. The
+  bridge forwards CMD_DATA frames verbatim in both directions — it *is* a
+  KISS TNC as seen from the network.
+- **Digipeater + iGate**: `digipeater.py` and `igate.py` run on the AR9331
+  as two independent TCP clients of the bridge. Either can be enabled
+  without the other (`digipeater.enabled` / `igate.enabled` in config);
+  the digipeater has zero internet dependency.
+- **Reticulum**: `ChimeraInterface.py` (on the external host, inside
+  rnsd/MeshChat/Sideband) connects to the same bridge port. The Dragino acts
+  as a pure pass-through radio (see "RNode interoperability" below).
+
+The bridge pushes the radio profile for the active `mode:` at startup; the
+three `radio_*` profiles live in `config/config.yaml`.
+
+## ATmega328P ↔ AR9331 wire protocol
+
+KISS framing (FEND `0xC0`, FESC `0xDB`, TFEND `0xDC`, TFESC `0xDD`) over the
+UART at 115200 baud. First byte of each frame is a command:
+
+| Cmd | Direction | Payload | Meaning |
+|---|---|---|---|
+| `0x00` DATA | both | raw bytes | host→modem: transmit over the air; modem→host: bytes received over the air |
+| `0x07` SIGREPORT | modem→host | int16 BE RSSI dBm, int8 SNR dB | follows every received DATA frame; consumed/logged by the bridge, never forwarded to TCP clients |
+| `0x10` SETFREQ | host→modem | uint32 BE, Hz | set frequency |
+| `0x11` SETSF | host→modem | uint8, 6–12 | set spreading factor |
+| `0x12` SETBW | host→modem | uint32 BE, Hz | set bandwidth |
+| `0x13` SETCR | host→modem | uint8, 5–8 | set coding rate denominator (4/5…4/8) |
+| `0x14` SETPOWER | host→modem | uint8, dBm | set TX power |
+| `0x15` SETSYNC | host→modem | uint8 | set LoRa sync word |
+| `0x16` SETPREAMBLE | host→modem | uint16 BE, symbols | set preamble length |
+| `0x20` GETSTATUS | host→modem | none | request current config |
+| `0x21` STATUS | modem→host | freq u32, bw u32, sf u8, cr u8, power u8, sync u8, preamble u16 (BE) | current config |
+
+The same framing is reused on the TCP link (bridge ↔ clients): DATA frames
+pass through unmodified, so a plain KISS client sees a standard KISS TNC
+(port 0, command 0). Config commands from TCP clients are dropped unless
+`bridge.allow_client_config` is set.
+
+## Design decisions (with rationale)
+
+### 1. KISS-over-raw-serial instead of Bridge/Console (deviation from brief §2.4)
+
+The brief suggests the Yún `Bridge`/`Console` stack. We use plain
+`Serial` at 115200 with KISS framing instead, because:
+
+- `Console` is designed for text and does not guarantee binary
+  transparency; a TNC must be 8-bit clean.
+- The Yún bridge daemon adds latency and memory pressure on a 64MB device
+  for no benefit here.
+- KISS is a standard, battle-tested framing (we did not invent a serial
+  protocol from scratch — the deviation clause in §2.4 is satisfied).
+
+Deployment consequence: the Linux console/getty on `/dev/ttyATH0` must be
+disabled (see `hardware-notes.md`), exactly as Yún-class boards require
+when using the UART directly.
+
+### 2. Pure pass-through RF despite RadioHead headers (hard constraint §4.3.1)
+
+`RH_RF95` normally prepends a 4-byte header (TO/FROM/ID/FLAGS) to every
+on-air packet, which would break interoperability with RNode firmware and
+with the LoRa-APRS ecosystem (both transmit bare payloads).
+
+Workaround implemented in the sketch, using only public RadioHead API:
+
+- **TX**: the first 4 bytes of the payload are mapped onto
+  `setHeaderTo/From/Id/Flags` and the remainder is passed to `send()` —
+  the transmitted air payload is therefore exactly the original bytes.
+- **RX**: with `setPromiscuous(true)`, the 4 bytes RadioHead consumed as
+  "header" are re-prepended from `headerTo()/headerFrom()/headerId()/
+  headerFlags()` before handing the payload up.
+
+Limitations, accepted and documented: payloads shorter than 4 bytes cannot
+be sent or received (irrelevant for APRS and Reticulum traffic), and
+RadioHead's CRC handling still applies (LoRa CRC on, standard).
+
+### 3. Digipeater logic on the AR9331 (resolves brief §8 open question)
+
+WIDEn-N parsing/dedupe in Python on the Linux side, not on the ATmega328P.
+Rationale: the 328P has 2KB RAM and the sketch must stay mode-agnostic;
+string parsing and a dedupe table are trivial in Python and awkward in C on
+a constrained MCU. Consequence: "standalone" digipeater means "no internet
+needed", not "survives a Linux-side crash" — acceptable, since the AR9331
+must be up anyway for the bridge to exist.
+
+### 4. AR9331 language: Python 3, stdlib only (resolves brief §8 open question)
+
+`python3-light` is available via opkg for OpenWrt 18.06 / mips_24kc
+(verify on the actual Dragino feed at install time — fallback would be a
+C rewrite of the bridge). No third-party modules: serial via `termios`,
+config via a built-in parser for the two-level YAML subset used in
+`config.example.yaml`. Each daemon is a single self-contained file to make
+deployment a plain `scp`.
+
+### 5. iGate v1 is RX-only (RF → APRS-IS)
+
+Downlink (APRS-IS → RF messaging) deferred; the daemon keeps the server
+socket drained so the connection stays healthy. The q construct is added by
+the server; we only apply the standard no-gate rules (TCPIP/TCPXX/NOGATE/
+RFONLY, third-party `}` packets).
+
+### 6. APRS on-air format: LoRa-APRS "OE" convention
+
+Payloads are `0x3C 0xFF 0x01` + TNC2-style ASCII, matching the de-facto
+433.775 LoRa APRS ecosystem (OE5BPA trackers, iGates etc.). Note: KISS TCP
+clients in TNC mode receive this raw payload, **not** AX.25 — clients that
+insist on AX.25 framing need a conversion layer (open question below).
+
+## RNode interoperability (Reticulum mode)
+
+Acceptance criterion: the Dragino and a stock RNode device (any supported
+board) exchange Reticulum traffic over LoRa with no protocol translation.
+RNode's KISS command set is host-local only, exactly like our bridge
+protocol — but, **contrary to the original project assumption, RNode is
+not a fully transparent pipe on air**. Verified against
+`markqvist/RNode_Firmware` source (2026-07, `RNode_Firmware.ino`
+`transmit()`/`receive_callback()`, `Config.h`, `Framing.h`, `sx127x.cpp`):
+
+- **Every LoRa frame RNode transmits starts with 1 framing byte**: high
+  nibble = random per-packet sequence, bit 0 = `FLAG_SPLIT` (0x01).
+- Host packets up to `MTU` 508 bytes; anything longer than 254 bytes is
+  split into **exactly two** LoRa frames (254 + up to 254 data bytes),
+  both carrying the same header byte. The receiver completes reassembly
+  when the second frame with a matching sequence arrives; a non-split
+  frame or a different sequence discards a pending half.
+- **Sync word: `0x12`** on SX127x (`SYNC_WORD_7X`) — the SX127x "private"
+  default; our profiles already used it.
+- **Preamble: dynamic** — `max(24 ms of symbols, 18 symbols)`
+  (`LORA_PREAMBLE_TARGET_MS` 24, `LORA_PREAMBLE_SYMBOLS_MIN` 18). At
+  SF8/BW125 and slower this resolves to 18 symbols → `radio_reticulum`
+  now uses `preamble_symbols: 18`.
+- RNode also does CSMA/CAD before transmitting. We do not replicate this
+  (the modem transmits immediately) — acceptable for initial interop,
+  tracked as an open question below.
+
+Division of labour: the RNode PHY framing (header byte, split/reassembly)
+is implemented **entirely in `ChimeraInterface.py` on the host**
+(`build_frames()` / `_process_frame()`). The ATmega sketch and the bridge
+remain pass-through; each `CMD_DATA` frame equals one on-air LoRa frame.
+This required the sketch's serial buffer to accept 255-byte payloads
+(`SER_BUF_LEN` 256) — full-size RNode frames use all 255 bytes.
+
+Both ends must still match: frequency, BW, SF, CR, sync word.
+
+## Open questions (carried from the brief §8, updated)
+
+- [x] **RNode default sync word / preamble length** — verified from source,
+      mirrored in `radio_reticulum` (`0x12` / 18 symbols), see above.
+- [x] **RNS MTU 500 vs SX127x 255-byte frame limit** — resolved: RNode
+      splits >254-byte packets into two framed LoRa frames; replicated in
+      `ChimeraInterface.py`, `HW_MTU = 508` confirmed correct.
+- [ ] **CSMA/CAD channel access** — RNode senses the channel before TX,
+      we do not; add CAD-based hold-off in the sketch if collisions bite.
+- [ ] **AX.25 ↔ TNC2 conversion for TNC mode** — decide whether KISS
+      clients get raw LoRa-APRS payloads (current behaviour) or a proper
+      AX.25 conversion layer in the bridge.
+- [ ] **TX flow control** — during long transmissions (SF12 airtime in
+      seconds) the 328P's 64-byte serial buffer can overflow if the host
+      keeps pushing frames; add pacing in the bridge if this bites.
+- [ ] iGate downlink (APRS-IS → RF) in a later version.
+- [ ] License choice before publishing.
+- [ ] Interop testing across ≥2 RNode chip families (SX1276/78 + SX1262/68),
+      RNode firmware ≥ 1.80.
+- [ ] Verify `python3-light` availability on the actual Dragino 18.06 feed.
+- [ ] Confirm RNS custom-interface loading against the RNS versions bundled
+      by current MeshChat and Sideband releases.
