@@ -7,7 +7,11 @@ as a KISS-over-TCP server. This is the single process allowed to touch the
 serial port; every consumer (external KISS client, digipeater daemon, iGate
 daemon, Reticulum host interface) connects to the TCP port instead.
 
-- CMD_DATA (0x00) frames pass through in both directions, unmodified.
+- CMD_DATA (0x00) frames pass through in both directions, unmodified —
+  except in TNC mode with `kiss_text_translation` on (default), where the
+  bridge converts between the LoRa APRS text format used on air (OE header
+  0x3C 0xFF 0x01 + TNC2 ASCII) and the binary AX.25 UI frames KISS clients
+  (PinPoint, Xastir...) expect. See the conversion section below.
 - CMD_SIGREPORT (0x07) frames from the modem are logged, not forwarded
   (KISS clients would misinterpret them).
 - At startup the radio profile for the active mode (config `mode:`) is
@@ -23,6 +27,7 @@ pyserial dependency. Wire protocol spec: docs/architecture.md.
 """
 
 import os
+import re
 import select
 import socket
 import struct
@@ -140,6 +145,195 @@ class KissDeframer:
         return frames
 
 
+# ---------------- AX.25 <-> LoRa APRS text conversion (TNC mode) ----------
+# The 433.775 LoRa APRS ecosystem (OE5BPA trackers/iGates, RadioGroup/PIRS
+# nodes) transmits TNC2-style ASCII payloads, usually prefixed with the OE
+# header 0x3C 0xFF 0x01. KISS clients expect binary AX.25 UI frames and
+# silently discard the text. With `mode: tnc` and
+# `bridge.kiss_text_translation` on (default), the bridge converts at the
+# TCP<->serial boundary: the air side stays text, the client side AX.25.
+# Only the local KISS TCP link changes — nothing extra leaks on air.
+
+OE_HEADER = b"\x3c\xff\x01"
+AX25_UI, AX25_PID = 0x03, 0xF0
+MAX_AIR_PAYLOAD = 255  # SX127x LoRa frame limit
+
+_CALL_RE = re.compile(r"^([A-Z0-9]{1,6})(?:-([0-9]{1,2}))?(\*)?$")
+
+
+def _parse_call(s):
+    """'IZ0KEW-7' / 'IU0JIW-10*' -> (call, ssid, starred) or None."""
+    m = _CALL_RE.match(s)
+    if m is None:
+        return None
+    ssid = int(m.group(2)) if m.group(2) else 0
+    if ssid > 15:
+        return None
+    return m.group(1), ssid, m.group(3) is not None
+
+
+def _encode_addr(call, ssid, hbit, last):
+    out = bytearray()
+    for ch in call.ljust(6):
+        out.append(ord(ch) << 1)
+    ssid_byte = 0x60 | ((ssid & 0x0F) << 1)
+    if hbit:
+        ssid_byte |= 0x80  # H: has-been-repeated
+    if last:
+        ssid_byte |= 0x01  # address-field extension bit
+    out.append(ssid_byte)
+    return out
+
+
+def text_to_ax25(text):
+    """TNC2 text payload (OE header already stripped) -> AX.25 UI frame.
+
+    Returns (frame_bytes, header_str) or (None, reason). Everything past the
+    first ':' is the info field, copied verbatim — it can contain further
+    ':', double spaces, or arbitrary base91-compressed bytes; never trim or
+    re-encode it.
+    """
+    idx = text.find(b":")
+    if idx < 0:
+        return None, "no ':' separator"
+    try:
+        header = text[:idx].decode("ascii")
+    except UnicodeDecodeError:
+        return None, "non-ASCII header"
+    info = text[idx + 1:]
+    src_s, sep, rest = header.partition(">")
+    if not sep:
+        return None, "no '>' in header"
+    parts = rest.split(",")
+    if len(parts) - 1 > 8:
+        return None, "more than 8 path elements"
+    src = _parse_call(src_s.upper())
+    dest = _parse_call(parts[0].upper())
+    if src is None or src[2] or dest is None or dest[2]:
+        return None, "bad src/dest callsign in %r" % header
+    digis, starred_at = [], -1
+    for k, d in enumerate(parts[1:]):
+        c = _parse_call(d.upper())
+        if c is None:
+            return None, "bad path element %r" % d
+        digis.append(c)
+        if c[2]:
+            # TNC2: '*' marks the last repeater that handled the packet and
+            # implies the H bit on every digi before it as well
+            starred_at = k
+    frame = bytearray()
+    frame += _encode_addr(dest[0], dest[1], False, False)
+    frame += _encode_addr(src[0], src[1], False, not digis)
+    for k, (call, ssid, _) in enumerate(digis):
+        frame += _encode_addr(call, ssid, k <= starred_at, k == len(digis) - 1)
+    frame.append(AX25_UI)
+    frame.append(AX25_PID)
+    frame += info
+    return bytes(frame), header
+
+
+def _decode_addrs(frame):
+    """AX.25 address field -> ((call, ssid, hbit) list, control offset) or None."""
+    b = bytearray(frame)
+    addrs = []
+    i = 0
+    while True:
+        if i + 7 > len(b) or len(addrs) == 10:  # 2 + max 8 digis
+            return None
+        call = ""
+        for c in b[i:i + 6]:
+            if c & 0x01:  # extension bit inside a callsign
+                return None
+            ch = c >> 1
+            if not (ch == 0x20 or 0x30 <= ch <= 0x39 or 0x41 <= ch <= 0x5A):
+                return None
+            call += chr(ch)
+        call = call.rstrip()
+        if not call or " " in call:
+            return None
+        ssid_byte = b[i + 6]
+        addrs.append((call, (ssid_byte >> 1) & 0x0F, bool(ssid_byte & 0x80)))
+        i += 7
+        if ssid_byte & 0x01:
+            break
+    if len(addrs) < 2:
+        return None
+    return addrs, i
+
+
+def looks_like_ax25(payload):
+    """True if payload plausibly already is a binary AX.25 UI frame."""
+    dec = _decode_addrs(payload)
+    if dec is None:
+        return False
+    _, i = dec
+    b = bytearray(payload)
+    return i + 2 <= len(b) and b[i] == AX25_UI and b[i + 1] == AX25_PID
+
+
+def ax25_to_text(frame):
+    """AX.25 UI frame -> (OE-header LoRa APRS payload, header_str) or (None, reason)."""
+    dec = _decode_addrs(frame)
+    if dec is None:
+        return None, "bad address field"
+    addrs, i = dec
+    b = bytearray(frame)
+    if i + 2 > len(b):
+        return None, "truncated frame"
+    if b[i] != AX25_UI or b[i + 1] != AX25_PID:
+        return None, "not a UI frame (control 0x%02x, pid 0x%02x)" % (b[i], b[i + 1])
+    info = bytes(b[i + 2:])
+    dest, src, digis = addrs[0], addrs[1], addrs[2:]
+
+    def fmt(a):
+        return a[0] + ("-%d" % a[1] if a[1] else "")
+
+    last_h = -1
+    for k, d in enumerate(digis):
+        if d[2]:
+            last_h = k
+    header = fmt(src) + ">" + fmt(dest)
+    for k, d in enumerate(digis):
+        header += "," + fmt(d) + ("*" if k == last_h else "")
+    payload = OE_HEADER + header.encode("ascii") + b":" + info
+    if len(payload) > MAX_AIR_PAYLOAD:
+        return None, "%d B exceeds LoRa payload limit (%d)" % (
+            len(payload), MAX_AIR_PAYLOAD)
+    return payload, header
+
+
+def _hexdump(data, limit=32):
+    h = "".join("%02x" % b for b in bytearray(data[:limit]))
+    return h + ("..." if len(data) > limit else "")
+
+
+def rx_convert(payload):
+    """Air payload -> payload for KISS clients. Returns (bytes or None, note)."""
+    if payload.startswith(OE_HEADER):
+        frame, note = text_to_ax25(payload[len(OE_HEADER):])
+        if frame is None:
+            return None, "dropped OE packet (%s): %s" % (note, _hexdump(payload))
+        return frame, "text->ax25 %s (%d B)" % (note, len(frame))
+    frame, note = text_to_ax25(payload)  # some firmwares omit the OE header
+    if frame is not None:
+        return frame, "headerless text->ax25 %s (%d B)" % (note, len(frame))
+    if looks_like_ax25(payload):
+        return payload, "ax25 passthrough (%d B)" % len(payload)
+    return None, "dropped unrecognized payload (%d B): %s" % (
+        len(payload), _hexdump(payload))
+
+
+def tx_convert(payload):
+    """KISS client payload -> on-air payload. Returns (bytes or None, note)."""
+    if payload.startswith(OE_HEADER):
+        # client already speaks LoRa APRS text: pass through
+        return payload, "text passthrough (%d B)" % len(payload)
+    out, note = ax25_to_text(payload)
+    if out is None:
+        return None, "dropped client frame (%s): %s" % (note, _hexdump(payload))
+    return out, "ax25->text %s (%d B)" % (note, len(out))
+
+
 # ---------------- serial port ----------------
 
 def open_serial(device, baud):
@@ -215,6 +409,11 @@ def main():
     mode = cfg.get("mode", "tnc")
     profile = cfg.get("radio_%s" % mode, {})
     allow_client_config = bool(bridge_cfg.get("allow_client_config", False))
+    # AX.25<->text conversion is a TNC-mode feature only: aprs mode daemons
+    # (digipeater/igate) parse the raw text themselves, reticulum mode
+    # requires a byte-exact pass-through (§4.3.1).
+    translate = mode == "tnc" and bool(
+        bridge_cfg.get("kiss_text_translation", True))
 
     # Bind before touching the serial port: local consumers (digipeater,
     # iGate) must be able to connect even while the serial link is down.
@@ -223,9 +422,9 @@ def main():
     srv.bind((bridge_cfg.get("listen_host", "0.0.0.0"),
               int(bridge_cfg.get("listen_port", 8001))))
     srv.listen(4)
-    log("mode=%s, listening on %s:%s" % (
+    log("mode=%s, listening on %s:%s, kiss_text_translation=%s" % (
         mode, bridge_cfg.get("listen_host", "0.0.0.0"),
-        bridge_cfg.get("listen_port", 8001)))
+        bridge_cfg.get("listen_port", 8001), "on" if translate else "off"))
 
     ser_fd = serial_connect(serial_cfg, profile)
     retry_at = time.time() + SERIAL_RETRY_S
@@ -273,6 +472,11 @@ def main():
                     continue
                 for cmd, payload in ser_deframer.feed(data):
                     if cmd == CMD_DATA:
+                        if translate:
+                            payload, note = rx_convert(payload)
+                            log("translate rx: %s" % note)
+                            if payload is None:
+                                continue
                         frame = kiss_frame(CMD_DATA, payload)
                         for c in list(clients):
                             try:
@@ -300,6 +504,11 @@ def main():
                     continue
                 for cmd, payload in clients[r].feed(data):
                     if cmd == CMD_DATA or allow_client_config:
+                        if cmd == CMD_DATA and translate:
+                            payload, note = tx_convert(payload)
+                            log("translate tx: %s" % note)
+                            if payload is None:
+                                continue
                         if ser_fd is None:
                             log("serial link down, dropped client frame")
                             continue

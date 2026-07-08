@@ -66,8 +66,11 @@ UART at 115200 baud. First byte of each frame is a command:
 
 The same framing is reused on the TCP link (bridge ↔ clients): DATA frames
 pass through unmodified, so a plain KISS client sees a standard KISS TNC
-(port 0, command 0). Config commands from TCP clients are dropped unless
-`bridge.allow_client_config` is set.
+(port 0, command 0) — with one exception: in TNC mode with
+`bridge.kiss_text_translation` on (default), the bridge converts DATA
+payloads between the on-air LoRa APRS text format and binary AX.25 at this
+boundary (see design decision 6). Config commands from TCP clients are
+dropped unless `bridge.allow_client_config` is set.
 
 ## Design decisions (with rationale)
 
@@ -131,12 +134,37 @@ socket drained so the connection stays healthy. The q construct is added by
 the server; we only apply the standard no-gate rules (TCPIP/TCPXX/NOGATE/
 RFONLY, third-party `}` packets).
 
-### 6. APRS on-air format: LoRa-APRS "OE" convention
+### 6. APRS on-air format: LoRa-APRS "OE" convention, AX.25 on the KISS side
 
 Payloads are `0x3C 0xFF 0x01` + TNC2-style ASCII, matching the de-facto
-433.775 LoRa APRS ecosystem (OE5BPA trackers, iGates etc.). Note: KISS TCP
-clients in TNC mode receive this raw payload, **not** AX.25 — clients that
-insist on AX.25 framing need a conversion layer (open question below).
+433.775 LoRa APRS ecosystem (OE5BPA trackers, iGates etc.). KISS clients
+(PinPoint, Xastir, APRSIS32…) expect binary AX.25 UI frames instead, and
+silently discard the raw text. In **TNC mode**, with
+`bridge.kiss_text_translation` on (default), the bridge therefore converts
+bidirectionally at the TCP↔serial boundary:
+
+- **RX (air → client)**: OE-header text (or headerless TNC2 text, which
+  some firmwares transmit) is parsed and re-encoded as an AX.25 UI frame
+  (control `0x03`, PID `0xF0`); the TNC2 `*` becomes the H
+  (has-been-repeated) bit on that digipeater **and every digi before it**.
+  The info field is copied verbatim (base91-compressed positions contain
+  arbitrary printable bytes and significant spaces). Payloads that already
+  look like valid AX.25 pass through; anything else is dropped and logged
+  in hex — no more 3-byte junk frames reaching the client.
+- **TX (client → air)**: the AX.25 UI frame is serialized back to TNC2
+  text (`*` only on the last digi with the H bit set), prefixed with the
+  OE header and transmitted. Packets that would exceed the 255-byte LoRa
+  payload are dropped and logged, never truncated. Payloads already
+  starting with the OE header pass through (legacy text-speaking clients).
+
+The conversion is strictly local to the KISS TCP link — the on-air format
+does not change, consistent with the layering rule (§9) and the "nothing
+leaks on air" constraint (§4.3.1). It is gated on `mode: tnc`: in aprs
+mode `digipeater.py`/`igate.py` parse the raw text themselves, and in
+reticulum mode the bridge must stay byte-exact pass-through. Round-trip
+(text→AX.25→text and AX.25→text→AX.25) is byte-identical; see
+`tests/test_kiss_translation.py`, built on packets captured off the air
+from the Italian RadioGroup/PIRS network (tocall `APLRG1`).
 
 ## RNode interoperability (Reticulum mode)
 
@@ -183,9 +211,9 @@ Both ends must still match: frequency, BW, SF, CR, sync word.
       `ChimeraInterface.py`, `HW_MTU = 508` confirmed correct.
 - [ ] **CSMA/CAD channel access** — RNode senses the channel before TX,
       we do not; add CAD-based hold-off in the sketch if collisions bite.
-- [ ] **AX.25 ↔ TNC2 conversion for TNC mode** — decide whether KISS
-      clients get raw LoRa-APRS payloads (current behaviour) or a proper
-      AX.25 conversion layer in the bridge.
+- [x] **AX.25 ↔ TNC2 conversion for TNC mode** — resolved: bidirectional
+      conversion in the bridge, `bridge.kiss_text_translation` (default on,
+      TNC mode only), see design decision 6.
 - [ ] **TX flow control** — during long transmissions (SF12 airtime in
       seconds) the 328P's 64-byte serial buffer can overflow if the host
       keeps pushing frames; add pacing in the bridge if this bites.

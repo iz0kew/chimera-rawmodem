@@ -26,9 +26,21 @@ Linux fa solo da ponte tra il link seriale e la rete. Vedi
 
 | Modalità | Cosa fa il dispositivo | Lato client |
 |---|---|---|
-| **TNC** | Espone la radio come KISS TNC su TCP | Xastir, APRSIS32, YAAC, qualsiasi software che parli KISS |
+| **TNC** | Espone la radio come KISS TNC su TCP | PinPoint, Xastir, APRSIS32, YAAC, qualsiasi software che parli KISS |
 | **Digipeater + iGate** | Digipeater LoRa APRS standalone (WIDEn-N), con inoltro opzionale del traffico ad APRS-IS. Digi e iGate attivabili indipendentemente | Nessuno richiesto (standalone) |
 | **Reticulum** | Espone la radio come interfaccia a pacchetti raw per una classe `Interface` RNS custom | `rnsd`, [MeshChat](https://github.com/liamcottle/reticulum-meshchat), [Sideband](https://github.com/markqvist/Sideband) su un host esterno |
+
+In modalità TNC il bridge traduce tra ciò che viaggia in aria e ciò che il
+client si aspetta: l'ecosistema LoRa APRS a 433.775 (tracker OE5BPA, nodi
+RadioGroup/PIRS…) trasmette pacchetti **testuali** (`<0xFF0x01` + ASCII
+TNC2), mentre i client KISS si aspettano frame **AX.25 binari**. Il bridge
+converte in modo bidirezionale — il testo ricevuto diventa un frame AX.25
+UI corretto (nominativi, path e bit has-been-repeated inclusi), e i beacon
+AX.25 del client escono in aria come testo LoRa APRS comprensibile ai nodi
+circostanti. Si controlla con `bridge.kiss_text_translation` nella config
+(default attivo; disattivalo per avere i payload grezzi). I payload
+ricevuti non riconosciuti vengono scartati e loggati invece di essere
+inoltrati come spazzatura.
 
 In modalità Reticulum il dispositivo replica il comportamento on-air del
 firmware ufficiale [RNode](https://github.com/markqvist/RNode_Firmware)

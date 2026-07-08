@@ -18,6 +18,13 @@ bridge:
   # Allow TCP clients to send radio config commands (0x10-0x16) to the
   # modem. Keep off unless you know you need it.
   allow_client_config: false
+  # TNC mode only: convert between the LoRa APRS text format used on air
+  # (OE header 0x3C 0xFF 0x01 + TNC2-style ASCII, as transmitted by the
+  # OE5BPA / RadioGroup / PIRS ecosystem) and the binary AX.25 UI frames
+  # that KISS clients (PinPoint, Xastir, APRSIS32...) expect.
+  # Off = raw payloads pass through unmodified (old behaviour).
+  # Ignored in aprs and reticulum modes.
+  kiss_text_translation: true
 
 # Active mode: tnc | aprs | reticulum
 # Selects which radio_* profile the bridge pushes to the modem at startup.

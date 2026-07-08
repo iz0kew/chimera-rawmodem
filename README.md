@@ -25,9 +25,20 @@ link to the network. See [docs/hardware-notes.md](docs/hardware-notes.md).
 
 | Mode | What the device does | Client side |
 |---|---|---|
-| **TNC** | Exposes the radio as a KISS TNC over TCP | Xastir, APRSIS32, YAAC, any KISS-speaking software |
+| **TNC** | Exposes the radio as a KISS TNC over TCP | PinPoint, Xastir, APRSIS32, YAAC, any KISS-speaking software |
 | **Digipeater + iGate** | Standalone LoRa APRS digipeater (WIDEn-N), optionally gating traffic to APRS-IS. Digi and iGate are independently toggleable | None required (standalone) |
 | **Reticulum** | Exposes the radio as a raw packet interface for a custom RNS `Interface` class | `rnsd`, [MeshChat](https://github.com/liamcottle/reticulum-meshchat), [Sideband](https://github.com/markqvist/Sideband) on an external host |
+
+In TNC mode the bridge translates between what's on the air and what the
+client expects: the 433.775 LoRa APRS ecosystem (OE5BPA trackers,
+RadioGroup/PIRS nodes…) transmits **text** packets (`<0xFF0x01` + TNC2
+ASCII), while KISS clients expect **binary AX.25** frames. The bridge
+converts bidirectionally — received text becomes proper AX.25 UI frames
+(callsigns, path and has-been-repeated bits included), and the client's
+AX.25 beacons go out as LoRa APRS text the surrounding nodes understand.
+Controlled by `bridge.kiss_text_translation` in the config (default on;
+turn it off to get raw payloads). Unrecognized on-air payloads are dropped
+and logged instead of being forwarded as junk.
 
 In Reticulum mode the device replicates the on-air behaviour of the official
 [RNode firmware](https://github.com/markqvist/RNode_Firmware) (1-byte PHY
