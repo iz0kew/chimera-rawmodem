@@ -42,6 +42,12 @@ circostanti. Si controlla con `bridge.kiss_text_translation` nella config
 ricevuti non riconosciuti vengono scartati e loggati invece di essere
 inoltrati come spazzatura.
 
+## PinPoint APRS in azione
+
+Stazioni della rete LoRa APRS italiana ricevute e decodificate via KISS TNC:
+
+![PinPoint APRS con stazioni LoRa](docs/images/pinpoint-map.png)
+
 In modalità Reticulum il dispositivo replica il comportamento on-air del
 firmware ufficiale [RNode](https://github.com/markqvist/RNode_Firmware)
 (framing PHY da 1 byte, sync word, preambolo — implementati nella classe
@@ -54,7 +60,8 @@ tnc|aprs|reticulum`), persistente ai riavvii — o un click nella web UI.
 Nessun reflash necessario.
 
 ## Hardware richiesto
-
+ ![Dragino LG01-P](docs/images/dragino-lg01p.jpg)
+ 
 - Dragino **LG01-P**, versione 433MHz (non LG01-N, non LG02 — architettura
   radio diversa e incompatibile)
 - Connettività Ethernet per la funzione iGate (altrimenti opzionale)
