@@ -40,6 +40,12 @@ Controlled by `bridge.kiss_text_translation` in the config (default on;
 turn it off to get raw payloads). Unrecognized on-air payloads are dropped
 and logged instead of being forwarded as junk.
 
+## PinPoint APRS in action
+
+Stations of the Italian LoRa APRS network received and decoded via KISS TNC:
+
+![PinPoint APRS with LoRa stations](docs/images/pinpoint-map.png)
+
 In Reticulum mode the device replicates the on-air behaviour of the official
 [RNode firmware](https://github.com/markqvist/RNode_Firmware) (1-byte PHY
 framing, sync word, preamble — implemented in the host-side interface class),
@@ -51,6 +57,7 @@ tnc|aprs|reticulum`), persistent across reboots — or a click in the web UI.
 No reflash needed.
 
 ## Hardware required
+![Dragino LG01-P](docs/images/dragino-lg01p.jpg)
 
 - Dragino **LG01-P**, 433MHz version (not LG01-N, not LG02 — different,
   incompatible radio architecture)
