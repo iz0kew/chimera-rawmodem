@@ -80,3 +80,15 @@ igate:
   server: euro.aprs2.net   # regional rotate address — do not pin one server
   port: 14580
   # callsign + passcode live in aprs-is.conf (see aprs-is.example.conf)
+  # Downlink (APRS-IS -> RF): transmit APRS messages arriving from the
+  # internet, but only those addressed to stations heard on RF within
+  # heard_seconds, wrapped in third-party format. Requires a valid passcode
+  # (with the receive-only -1 the server routes nothing to us and downlink
+  # is forced off). Toggle at runtime: `chimera-mode igate-tx on|off`,
+  # also available from the LuCI page — no bridge restart involved.
+  downlink: false
+  heard_seconds: 1800      # "recently heard on RF" window for the downlink
+  #tocall: APRS            # AX.25 destination of our third-party frames
+  #filter: t/m             # extra APRS-IS server filter (normally not
+                           # needed: the server automatically sends messages
+                           # for stations we recently gated)

@@ -4,6 +4,8 @@
 #   chimera-mode aprs        digipeater + iGate on, APRS radio profile
 #   chimera-mode tnc         pure KISS TNC (digipeater/iGate off), APRS profile
 #   chimera-mode reticulum   Reticulum modem (digipeater/iGate off)
+#   chimera-mode igate-tx on|off   iGate downlink (APRS-IS -> RF) toggle;
+#                            restarts only the iGate daemon, not the bridge
 #   chimera-mode status      show current mode, services and radio profile
 #
 # Install: copy to /usr/bin/chimera-mode, chmod +x.
@@ -13,6 +15,7 @@ CONF=/etc/chimera/config.yaml
 
 usage() {
 	echo "usage: chimera-mode aprs|tnc|reticulum|status"
+	echo "       chimera-mode igate-tx on|off"
 	exit 1
 }
 
@@ -28,6 +31,23 @@ set_config() {
 		}
 		{ print }
 	' "$CONF" > "$CONF.tmp" && mv "$CONF.tmp" "$CONF"
+}
+
+# Rewrite the downlink: flag of the igate section — or insert it right
+# after the igate: header for configs predating the feature. The key name
+# only exists in that section, so a flat match is safe.
+set_downlink() {
+	if grep -q "^[[:space:]]*downlink:" "$CONF"; then
+		awk -v en="$1" '
+			/^[ \t]+downlink:/ { print "  downlink: " en; next }
+			{ print }
+		' "$CONF" > "$CONF.tmp" && mv "$CONF.tmp" "$CONF"
+	else
+		awk -v en="$1" '
+			{ print }
+			/^igate:/ { print "  downlink: " en }
+		' "$CONF" > "$CONF.tmp" && mv "$CONF.tmp" "$CONF"
+	fi
 }
 
 # Note: on this OpenWrt (CC 15.05.1) enable/disable return non-zero even on
@@ -53,6 +73,8 @@ show_status() {
 		if ps w | grep "chimera-$svc.py" | grep -qv grep; then run="running"; else run="stopped"; fi
 		echo "$svc: $boot $run"
 	done
+	dl=$(awk '/^[ \t]+downlink:/ { print $2 }' "$CONF")
+	echo "igate downlink: ${dl:-false}"
 	echo "profile:  $(logread | grep 'radio profile pushed' | tail -n 1 | sed 's/.*pushed: //')"
 	netstat -tln 2>/dev/null | grep -q ':8001 ' && echo "port 8001: LISTEN" || echo "port 8001: NOT listening"
 }
@@ -69,6 +91,21 @@ case "$1" in
 	reticulum)
 		set_config reticulum false
 		services_off
+		;;
+	igate-tx)
+		case "$2" in
+			on)  set_downlink true ;;
+			off) set_downlink false ;;
+			*)   usage ;;
+		esac
+		# Only the iGate daemon is restarted: it exits on its own when
+		# igate.enabled is false (tnc/reticulum modes), so this is
+		# harmless there. No bridge restart — port 8001 stays up and
+		# connected clients are not disturbed.
+		/etc/init.d/chimera-igate restart
+		echo "--- igate downlink set to $2 ---"
+		show_status
+		exit 0
 		;;
 	status)
 		show_status

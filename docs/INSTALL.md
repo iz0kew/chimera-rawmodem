@@ -177,7 +177,8 @@ What to edit:
   now — you will switch personalities later with one command.
 - `aprs-is.conf` (only needed for the iGate): your callsign and your
   [APRS-IS passcode](https://apps.magicbug.co.uk/passcode/). `passcode -1`
-  keeps you receive-only.
+  keeps you receive-only (and disables the iGate downlink, which needs a
+  valid passcode).
 - The radio profiles default to the European LoRa APRS convention
   (433.775 MHz, SF12, BW125, CR4/5) — verify against your local band plan.
 
@@ -283,6 +284,7 @@ One command, persistent across reboots and power loss:
 chimera-mode tnc         # pure KISS TNC over TCP (default)
 chimera-mode aprs        # digipeater + iGate
 chimera-mode reticulum   # Reticulum radio modem
+chimera-mode igate-tx on|off   # iGate downlink (APRS-IS -> RF) toggle
 chimera-mode status      # what is running right now
 ```
 
@@ -307,6 +309,15 @@ then `/etc/init.d/chimera-digipeater restart` /
 `/etc/init.d/chimera-igate restart` as appropriate. The iGate logs in to
 `euro.aprs2.net:14580` by default — pick your region's rotate address in
 `config.yaml` (`noam`/`soam`/`euro`/`asia`/`aunz`.aprs2.net).
+
+The iGate is uplink-only (RF → APRS-IS) by default. `chimera-mode igate-tx
+on` also gates APRS **messages** from the internet to RF — only those
+addressed to stations heard on RF in the last 30 minutes, in standard
+third-party format. It requires a valid passcode in `aprs-is.conf` (with
+`-1` it stays off) and only restarts the iGate daemon, so the bridge and
+any connected clients are untouched. `chimera-mode igate-tx off` turns it
+back off; both persist across reboots and are also available as buttons on
+the LuCI page.
 
 Check it works: `logread | grep chimera` on the device, and after the
 first received packet, search your callsign's raw packets on aprs.fi for

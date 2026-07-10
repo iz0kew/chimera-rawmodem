@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""chimera-rawmodem — APRS iGate daemon (RF -> APRS-IS, RX-only in v1).
+"""chimera-rawmodem — APRS iGate daemon (RF -> APRS-IS, optional downlink).
 
 Connects to the chimera-bridge KISS TCP port as an ordinary client and
 forwards received LoRa APRS packets to an APRS-IS Tier 2 server. Fully
@@ -14,8 +14,13 @@ Gating rules (per aprs-is.net conventions):
 Credentials live in /etc/chimera/aprs-is.conf (gitignored real copy of
 config/aprs-is.example.conf). Refuses to start with the N0CALL placeholder.
 
-Downlink (APRS-IS -> RF) is deliberately not implemented in v1; server
-traffic is read and discarded to keep the connection alive.
+Downlink (APRS-IS -> RF, igate.downlink, default off) follows the
+aprs-is.net IGating conventions: only APRS messages addressed to stations
+recently heard on RF (igate.heard_seconds) are transmitted, wrapped in
+third-party format (MYCALL>TOCALL:}SRC>DEST,TCPIP,MYCALL*:body). It
+requires a valid passcode — with the receive-only passcode -1 the server
+routes nothing to us, so downlink is forced off. With downlink off,
+server traffic is read and discarded to keep the connection alive.
 
 Stdlib only, runs on Python 2.7 and 3.x (the Dragino factory firmware
 ships Python 2.7 only — see docs/hardware-notes.md).
@@ -94,6 +99,20 @@ def load_credentials(path):
     return creds
 
 
+def kiss_frame(cmd, payload=b""):
+    # bytearray iteration yields ints on both py2 and py3 (bytes does not)
+    out = bytearray([FEND])
+    for b in bytearray([cmd]) + bytearray(payload):
+        if b == FEND:
+            out += bytearray([FESC, TFEND])
+        elif b == FESC:
+            out += bytearray([FESC, TFESC])
+        else:
+            out.append(b)
+    out.append(FEND)
+    return bytes(out)
+
+
 class KissDeframer:
     def __init__(self):
         self.buf = bytearray()
@@ -143,11 +162,50 @@ def gateable(tnc2):
     return True
 
 
-def connect_aprsis(server, port, callsign, passcode):
+MAX_RF_PAYLOAD = 255  # SX127x LoRa payload limit, OE header included
+
+
+def downlink_frame(line, mycall, tocall, heard, now, heard_seconds):
+    """APRS-IS line (bytes) -> OE payload to transmit on RF, or None.
+
+    Gate-to-RF rules per aprs-is.net conventions: only APRS messages
+    (':ADDRESSEE:text'), only when the addressee was heard on RF within
+    heard_seconds, wrapped in third-party format with the internet path
+    replaced by TCPIP,MYCALL*.
+    """
+    header, sep, body = line.partition(b":")
+    if not sep or b">" not in header:
+        return None
+    # APRS message: ':' + addressee padded to 9 chars + ':' + text
+    if not body.startswith(b":") or len(body) < 11 or body[10:11] != b":":
+        return None
+    src = header.partition(b">")[0].strip()
+    try:
+        src_call = src.decode("ascii").upper()
+        addressee = body[1:10].decode("ascii").strip().upper()
+    except UnicodeDecodeError:
+        return None
+    if not addressee or src_call == mycall or addressee == mycall:
+        return None
+    ts = heard.get(addressee)
+    if ts is None or now - ts > heard_seconds:
+        return None
+    dest = header.partition(b">")[2].split(b",")[0].strip()
+    mycall_b = mycall.encode("ascii")
+    third = (mycall_b + b">" + tocall.encode("ascii") + b":}" +
+             src + b">" + dest + b",TCPIP," + mycall_b + b"*:" + body)
+    if len(OE_HEADER) + len(third) > MAX_RF_PAYLOAD:
+        return None
+    return OE_HEADER + third
+
+
+def connect_aprsis(server, port, callsign, passcode, srv_filter=""):
     sock = socket.create_connection((server, port), timeout=15)
-    login = "user %s pass %s vers chimera-rawmodem %s\r\n" % (
+    login = "user %s pass %s vers chimera-rawmodem %s" % (
         callsign, passcode, VERSION)
-    sock.sendall(login.encode("ascii"))
+    if srv_filter:
+        login += " filter %s" % srv_filter
+    sock.sendall((login + "\r\n").encode("ascii"))
     log("logged in to %s:%d as %s" % (server, port, callsign))
     return sock
 
@@ -176,14 +234,30 @@ def main():
     bridge_host = str(igate.get("bridge_host", "127.0.0.1"))
     bridge_port = int(bridge.get("listen_port", 8001))
 
+    downlink = bool(igate.get("downlink", False))
+    heard_seconds = int(igate.get("heard_seconds", 1800))
+    tocall = str(igate.get("tocall", "APRS")).upper()
+    srv_filter = str(igate.get("filter", "") or "")
+    if downlink and passcode.strip() == "-1":
+        log("downlink enabled but passcode is -1 (receive-only) — "
+            "forcing downlink off")
+        downlink = False
+    if downlink:
+        log("downlink on: tocall %s, heard window %d s" %
+            (tocall, heard_seconds))
+
+    heard = {}  # callsign -> last time heard on RF, for downlink gating
+
     while True:
         rf = aprsis = None
         try:
             rf = socket.create_connection((bridge_host, bridge_port), timeout=10)
             rf.settimeout(None)
             log("connected to bridge %s:%d" % (bridge_host, bridge_port))
-            aprsis = connect_aprsis(server, server_port, callsign, passcode)
+            aprsis = connect_aprsis(server, server_port, callsign, passcode,
+                                    srv_filter)
             deframer = KissDeframer()
+            isbuf = b""
 
             while True:
                 readable, _, _ = select.select([rf, aprsis], [], [])
@@ -191,8 +265,23 @@ def main():
                     data = aprsis.recv(4096)
                     if not data:
                         raise OSError("APRS-IS closed connection")
-                    # v1 is RX-only: server lines (including '#' keepalives)
-                    # are read and discarded.
+                    # With downlink off, server lines (including '#'
+                    # keepalives) are read and discarded.
+                    if downlink:
+                        isbuf += data
+                        while b"\n" in isbuf:
+                            line, _, isbuf = isbuf.partition(b"\n")
+                            line = line.strip()
+                            if not line or line.startswith(b"#"):
+                                continue
+                            frame = downlink_frame(line, callsign, tocall,
+                                                   heard, time.time(),
+                                                   heard_seconds)
+                            if frame is None:
+                                continue
+                            rf.sendall(kiss_frame(CMD_DATA, frame))
+                            log("rf-gated: %s" % frame[len(OE_HEADER):]
+                                .decode("ascii", "replace"))
                 if rf in readable:
                     data = rf.recv(4096)
                     if not data:
@@ -204,8 +293,18 @@ def main():
                             tnc2 = payload[len(OE_HEADER):].decode("ascii")
                         except UnicodeDecodeError:
                             continue
-                        if tnc2.split(">", 1)[0].rstrip("*") == callsign:
+                        src_call = tnc2.split(">", 1)[0].rstrip("*").upper()
+                        if src_call == callsign:
                             continue  # our own RF transmission
+                        # Heard-on-RF table for downlink, updated before the
+                        # no-gate rules: a NOGATE station doesn't get gated
+                        # to the internet but is still reachable on RF.
+                        now = time.time()
+                        for k in [k for k, t in heard.items()
+                                  if now - t > heard_seconds]:
+                            del heard[k]
+                        if src_call:
+                            heard[src_call] = now
                         if not gateable(tnc2):
                             continue
                         aprsis.sendall((tnc2 + "\r\n").encode("ascii"))

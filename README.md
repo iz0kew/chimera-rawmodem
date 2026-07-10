@@ -26,7 +26,7 @@ link to the network. See [docs/hardware-notes.md](docs/hardware-notes.md).
 | Mode | What the device does | Client side |
 |---|---|---|
 | **TNC** | Exposes the radio as a KISS TNC over TCP | PinPoint, Xastir, APRSIS32, YAAC, any KISS-speaking software |
-| **Digipeater + iGate** | Standalone LoRa APRS digipeater (WIDEn-N), optionally gating traffic to APRS-IS. Digi and iGate are independently toggleable | None required (standalone) |
+| **Digipeater + iGate** | Standalone LoRa APRS digipeater (WIDEn-N), optionally gating traffic to APRS-IS — with an optional message downlink back to RF. Digi, iGate and downlink are independently toggleable | None required (standalone) |
 | **Reticulum** | Exposes the radio as a raw packet interface for a custom RNS `Interface` class | `rnsd`, [MeshChat](https://github.com/liamcottle/reticulum-meshchat), [Sideband](https://github.com/markqvist/Sideband) on an external host |
 
 In TNC mode the bridge translates between what's on the air and what the

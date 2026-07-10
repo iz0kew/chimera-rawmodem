@@ -127,12 +127,28 @@ config via a built-in parser for the two-level YAML subset used in
 `config.example.yaml`. Each daemon is a single self-contained file to make
 deployment a plain `scp`.
 
-### 5. iGate v1 is RX-only (RF → APRS-IS)
+### 5. iGate: uplink always, downlink (APRS-IS → RF) as a runtime toggle
 
-Downlink (APRS-IS → RF messaging) deferred; the daemon keeps the server
-socket drained so the connection stays healthy. The q construct is added by
-the server; we only apply the standard no-gate rules (TCPIP/TCPXX/NOGATE/
-RFONLY, third-party `}` packets).
+Uplink (RF → APRS-IS) applies the standard no-gate rules (TCPIP/TCPXX/
+NOGATE/RFONLY, third-party `}` packets); the q construct is added by the
+server.
+
+Downlink (`igate.downlink`, default off; toggled at runtime with
+`chimera-mode igate-tx on|off` or from the LuCI page, restarting only the
+iGate daemon — bridge and port 8001 untouched) follows the aprs-is.net
+IGating conventions rather than retransmitting the server feed: only APRS
+messages (`::ADDRESSEE:`), only when the addressee was heard on RF within
+`igate.heard_seconds` (default 30 min — the daemon keeps a heard table
+updated *before* the no-gate rules, since a NOGATE station is still
+reachable on RF), wrapped in third-party format
+(`MYCALL>TOCALL:}SRC>DEST,TCPIP,MYCALL*:body`) and transmitted through the
+same bridge KISS socket the digipeater uses. Frames that would exceed the
+255-byte LoRa payload are dropped, never truncated. A valid APRS-IS
+passcode is required: with the receive-only `-1` the server routes nothing
+to us, and the daemon forces downlink off with a warning. Tier 2 servers
+automatically send messages addressed to stations we recently gated, so no
+extra server filter is normally needed (`igate.filter` exists for special
+cases). Gating logic covered by `tests/test_igate_downlink.py`.
 
 ### 6. APRS on-air format: LoRa-APRS "OE" convention, AX.25 on the KISS side
 
@@ -217,7 +233,8 @@ Both ends must still match: frequency, BW, SF, CR, sync word.
 - [ ] **TX flow control** — during long transmissions (SF12 airtime in
       seconds) the 328P's 64-byte serial buffer can overflow if the host
       keeps pushing frames; add pacing in the bridge if this bites.
-- [ ] iGate downlink (APRS-IS → RF) in a later version.
+- [x] **iGate downlink (APRS-IS → RF)** — implemented as a runtime toggle
+      (`igate.downlink` / `chimera-mode igate-tx`), see design decision 5.
 - [ ] License choice before publishing.
 - [ ] Interop testing across ≥2 RNode chip families (SX1276/78 + SX1262/68),
       RNode firmware ≥ 1.80.

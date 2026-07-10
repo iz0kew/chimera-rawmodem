@@ -27,7 +27,7 @@ Linux fa solo da ponte tra il link seriale e la rete. Vedi
 | Modalità | Cosa fa il dispositivo | Lato client |
 |---|---|---|
 | **TNC** | Espone la radio come KISS TNC su TCP | PinPoint, Xastir, APRSIS32, YAAC, qualsiasi software che parli KISS |
-| **Digipeater + iGate** | Digipeater LoRa APRS standalone (WIDEn-N), con inoltro opzionale del traffico ad APRS-IS. Digi e iGate attivabili indipendentemente | Nessuno richiesto (standalone) |
+| **Digipeater + iGate** | Digipeater LoRa APRS standalone (WIDEn-N), con inoltro opzionale del traffico ad APRS-IS — e downlink opzionale dei messaggi verso la radio. Digi, iGate e downlink attivabili indipendentemente | Nessuno richiesto (standalone) |
 | **Reticulum** | Espone la radio come interfaccia a pacchetti raw per una classe `Interface` RNS custom | `rnsd`, [MeshChat](https://github.com/liamcottle/reticulum-meshchat), [Sideband](https://github.com/markqvist/Sideband) su un host esterno |
 
 In modalità TNC il bridge traduce tra ciò che viaggia in aria e ciò che il

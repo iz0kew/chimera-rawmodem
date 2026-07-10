@@ -16,7 +16,11 @@ function index()
 	entry({"admin", "system", "chimera"}, call("action_chimera"), _("Chimera Mode"), 60)
 end
 
-local ALLOWED = { aprs = true, tnc = true, reticulum = true }
+-- action name in the URL -> literal chimera-mode arguments
+local ALLOWED = {
+	aprs = "aprs", tnc = "tnc", reticulum = "reticulum",
+	["igatetx-on"] = "igate-tx on", ["igatetx-off"] = "igate-tx off",
+}
 
 function action_chimera()
 	local http = require "luci.http"
@@ -27,7 +31,7 @@ function action_chimera()
 	local mode = http.formvalue("mode")
 	local result = nil
 	if mode and ALLOWED[mode] then
-		result = sys.exec("/usr/bin/chimera-mode " .. mode .. " 2>&1")
+		result = sys.exec("/usr/bin/chimera-mode " .. ALLOWED[mode] .. " 2>&1")
 	end
 	local status = sys.exec("/usr/bin/chimera-mode status 2>&1")
 
@@ -53,9 +57,17 @@ function action_chimera()
 <a class="btn" href="?mode=reticulum">Switch to Reticulum</a>
 <a class="btn" href="?">Refresh status</a>
 </p>
-<p class="note">Switching restarts the bridge and takes ~15 seconds &mdash;
-the page waits and then shows the result. Clients connected to port 8001
-are briefly disconnected. The selected mode persists across reboots and
-power loss.</p>
+<p>
+<a class="btn" href="?mode=igatetx-on">iGate downlink ON (IS&rarr;RF)</a>
+<a class="btn" href="?mode=igatetx-off">iGate downlink OFF</a>
+</p>
+<p class="note">Switching modes restarts the bridge and takes ~15 seconds
+&mdash; the page waits and then shows the result. Clients connected to port
+8001 are briefly disconnected. The selected mode persists across reboots
+and power loss.</p>
+<p class="note">The iGate downlink toggle (APRS-IS &rarr; RF messages for
+recently heard stations, active in APRS mode with a valid passcode) only
+restarts the iGate daemon &mdash; the bridge and port 8001 are not touched.
+It persists too.</p>
 </body></html>]])
 end
