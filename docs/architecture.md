@@ -182,6 +182,31 @@ reticulum mode the bridge must stay byte-exact pass-through. Round-trip
 `tests/test_kiss_translation.py`, built on packets captured off the air
 from the Italian RadioGroup/PIRS network (tocall `APLRG1`).
 
+### 7. Serial TX pacing in the bridge (resolves "TX flow control")
+
+Found on hardware 2026-07-11 during RNode interop testing: the modem is
+effectively **deaf while it transmits**. `txRaw()` blocks in
+`waitPacketSent()` for the whole airtime (~0.73 s for a full 255-byte frame
+at SF8/BW125, ~9 s at SF12) and the ATmega328P hardware serial buffer holds
+only 64 bytes, so any frame written to the serial link during an ongoing
+transmission arrives truncated (~26–28 bytes lost per overrun). Symptom:
+RNode split packets (two back-to-back LoRa frames, any RNS payload over
+~135 bytes) systematically lost their second frame; the same corruption
+would hit any close burst of APRS or KISS traffic.
+
+Fix: the bridge routes **every** serial write through a paced queue
+(`TxPacer`): the next frame is written only after the previous DATA frame's
+computed time-on-air (Semtech AN1200.13 formula, explicit header + CRC as
+RH_RF95 configures them) plus serial transfer time and a 100 ms guard. The
+pacer tracks radio parameter changes (CMD_SET*) so airtime estimates follow
+the active profile. Queue cap 32 frames, overflow dropped and logged —
+KISS gives no delivery guarantee, and unbounded buffering would just add
+latency. Chosen over an ATmega-side fix (explicit READY flow control or
+bigger buffers) because it requires no reflash and protects all three modes
+at the single point that owns the serial port. Verified on hardware: split
+packets now pass intact in both directions (`tests/test_bridge_pacing.py`
+covers the airtime math and queue behaviour).
+
 ## RNode interoperability (Reticulum mode)
 
 Acceptance criterion: the Dragino and a stock RNode device (any supported
@@ -230,14 +255,16 @@ Both ends must still match: frequency, BW, SF, CR, sync word.
 - [x] **AX.25 ↔ TNC2 conversion for TNC mode** — resolved: bidirectional
       conversion in the bridge, `bridge.kiss_text_translation` (default on,
       TNC mode only), see design decision 6.
-- [ ] **TX flow control** — during long transmissions (SF12 airtime in
-      seconds) the 328P's 64-byte serial buffer can overflow if the host
-      keeps pushing frames; add pacing in the bridge if this bites.
+- [x] **TX flow control** — it bit (RNode split packets lost their second
+      frame): airtime-paced TX queue in the bridge, see design decision 7.
 - [x] **iGate downlink (APRS-IS → RF)** — implemented as a runtime toggle
       (`igate.downlink` / `chimera-mode igate-tx`), see design decision 5.
 - [ ] License choice before publishing.
 - [ ] Interop testing across ≥2 RNode chip families (SX1276/78 + SX1262/68),
-      RNode firmware ≥ 1.80.
+      RNode firmware ≥ 1.80. **SX1262/68 done 2026-07-11**: Heltec LoRa32 v3
+      (SX1268, RNode 1.86) ↔ Dragino, echo round-trips at 64/180/300-byte
+      payloads in both directions incl. split packets, RSSI ≈ -55 dBm /
+      SNR ≈ 12 dB on the bench. Still open: an SX1276/78-based board.
 - [ ] Verify `python3-light` availability on the actual Dragino 18.06 feed.
 - [ ] Confirm RNS custom-interface loading against the RNS versions bundled
       by current MeshChat and Sideband releases.

@@ -26,6 +26,8 @@ choice (see docs/hardware-notes.md). Serial access via termios, no
 pyserial dependency. Wire protocol spec: docs/architecture.md.
 """
 
+import errno
+import math
 import os
 import re
 import select
@@ -34,6 +36,7 @@ import struct
 import sys
 import termios
 import time
+from collections import deque
 
 SOCK_ERRORS = (OSError, IOError, socket.error)  # py2: three distinct types
 
@@ -334,6 +337,99 @@ def tx_convert(payload):
     return out, "ax25->text %s (%d B)" % (note, len(out))
 
 
+# ---------------- TX pacing ----------------
+# The ATmega modem is effectively deaf while it transmits: txRaw blocks in
+# waitPacketSent() for the whole airtime (~0.73 s for a full frame at
+# SF8/BW125, ~9 s at SF12) and the ATmega328P hardware serial buffer holds
+# only 64 bytes, so any frame written to the serial link during an ongoing
+# transmission arrives truncated/corrupted. Verified on hardware 2026-07-11:
+# RNode split packets (two back-to-back frames) systematically lost their
+# second frame in Reticulum mode. Every serial write therefore goes through
+# a queue paced by the computed airtime of the previous DATA frame.
+
+
+def lora_airtime_s(payload_len, params):
+    """LoRa time-on-air (Semtech AN1200.13), explicit header + CRC as
+    configured by RH_RF95. `params` is a radio profile dict."""
+    sf = int(params.get("spreading_factor", 12))
+    bw = float(params.get("bandwidth_hz", 125000))
+    cr = int(params.get("coding_rate", 5))  # denominator 5..8
+    n_pre = int(params.get("preamble_symbols", 8))
+    t_sym = (2.0 ** sf) / bw
+    de = 2 if t_sym > 0.016 else 0  # LowDataRateOptimize
+    num = 8.0 * payload_len - 4.0 * sf + 28 + 16
+    n_pay = 8 + max(int(math.ceil(num / (4.0 * (sf - de)))) * cr, 0)
+    return (n_pre + 4.25 + n_pay) * t_sym
+
+
+class TxPacer:
+    """Serial write queue paced by the modem's TX airtime.
+
+    push() enqueues a frame; pop_due() hands it back once the modem is
+    guaranteed idle again; sent() must be called after the actual write and
+    accounts for the new frame's airtime (plus serial transfer time and a
+    guard margin). Config frames update the tracked radio parameters so
+    subsequent airtime estimates stay correct.
+    """
+
+    MAX_QUEUE = 32
+    GUARD_S = 0.1
+
+    def __init__(self, params, baud):
+        self.params = dict(params)
+        self.baud = float(baud)
+        self.queue = deque()
+        self.ready_at = 0.0
+
+    def push(self, cmd, payload):
+        if len(self.queue) >= self.MAX_QUEUE:
+            return False
+        self.queue.append((cmd, payload))
+        return True
+
+    def timeout(self, now):
+        """Seconds until the next queued frame may be written; None if empty."""
+        if not self.queue:
+            return None
+        return max(0.0, self.ready_at - now)
+
+    def pop_due(self, now):
+        if self.queue and now >= self.ready_at:
+            return self.queue.popleft()
+        return None
+
+    def sent(self, cmd, payload, wire_len, now):
+        air = lora_airtime_s(len(payload), self.params) if cmd == CMD_DATA else 0.0
+        self.ready_at = now + wire_len * 10.0 / self.baud + air + self.GUARD_S
+        p = bytearray(payload)
+        if cmd == CMD_SETSF and len(p) == 1:
+            self.params["spreading_factor"] = p[0]
+        elif cmd == CMD_SETBW and len(p) == 4:
+            self.params["bandwidth_hz"] = struct.unpack(">I", bytes(p))[0]
+        elif cmd == CMD_SETCR and len(p) == 1:
+            self.params["coding_rate"] = p[0]
+        elif cmd == CMD_SETPREAMBLE and len(p) == 2:
+            self.params["preamble_symbols"] = struct.unpack(">H", bytes(p))[0]
+
+    def clear(self):
+        self.queue.clear()
+        self.ready_at = 0.0
+
+
+def write_all(fd, data):
+    """os.write() the whole buffer to a non-blocking fd."""
+    while data:
+        try:
+            n = os.write(fd, data)
+        except (OSError, IOError) as e:
+            if getattr(e, "errno", None) in (
+                    errno.EAGAIN, errno.EWOULDBLOCK, errno.EINTR):
+                time.sleep(0.005)
+                continue
+            raise
+        data = data[n:]
+
+
 # ---------------- serial port ----------------
 
 def open_serial(device, baud):
@@ -431,6 +527,7 @@ def main():
 
     clients = {}  # sock -> KissDeframer
     ser_deframer = KissDeframer()
+    pacer = TxPacer(profile, int(serial_cfg.get("baud", 115200)))
 
     def drop_serial(fd):
         try:
@@ -446,12 +543,34 @@ def main():
             retry_at = time.time() + SERIAL_RETRY_S
             if ser_fd is not None:
                 ser_deframer = KissDeframer()
+                pacer.clear()
 
         rlist = [srv] + list(clients)
         if ser_fd is not None:
             rlist.append(ser_fd)
-        timeout = None if ser_fd is not None else max(0.5, retry_at - time.time())
+        now = time.time()
+        timeout = None if ser_fd is not None else max(0.5, retry_at - now)
+        if ser_fd is not None:
+            wait = pacer.timeout(now)
+            if wait is not None:
+                timeout = wait if timeout is None else min(timeout, wait)
         readable, _, _ = select.select(rlist, [], [], timeout)
+
+        # drain the TX queue: write the next frame only once the modem is
+        # guaranteed done transmitting the previous one (see TxPacer)
+        while ser_fd is not None:
+            item = pacer.pop_due(time.time())
+            if item is None:
+                break
+            cmd, payload = item
+            wire = kiss_frame(cmd, payload)
+            try:
+                write_all(ser_fd, wire)
+                pacer.sent(cmd, payload, len(wire), time.time())
+            except (OSError, IOError):
+                ser_fd = drop_serial(ser_fd)
+                retry_at = time.time() + SERIAL_RETRY_S
+                pacer.clear()
 
         for r in readable:
             if r is srv:
@@ -512,11 +631,9 @@ def main():
                         if ser_fd is None:
                             log("serial link down, dropped client frame")
                             continue
-                        try:
-                            os.write(ser_fd, kiss_frame(cmd, payload))
-                        except (OSError, IOError):
-                            ser_fd = drop_serial(ser_fd)
-                            retry_at = time.time() + SERIAL_RETRY_S
+                        if not pacer.push(cmd, payload):
+                            log("tx queue full, dropped client frame (%d B)"
+                                % len(payload))
                     else:
                         log("dropped client cmd 0x%02x (config not allowed)" % cmd)
 
