@@ -51,9 +51,9 @@ Stazioni della rete LoRa APRS italiana ricevute e decodificate via KISS TNC:
 In modalità Reticulum il dispositivo replica il comportamento on-air del
 firmware ufficiale [RNode](https://github.com/markqvist/RNode_Firmware)
 (framing PHY da 1 byte, sync word, preambolo — implementati nella classe
-interfaccia lato host), quindi è progettato per scambiare traffico
-Reticulum direttamente con qualsiasi dispositivo RNode, a parità di
-parametri radio (frequenza, SF, BW, CR).
+interfaccia lato host), quindi scambia traffico Reticulum direttamente con
+qualsiasi dispositivo RNode, a parità di parametri radio (frequenza, SF,
+BW, CR) — verificato in aria contro un RNode reale (vedi Stato più sotto).
 
 Cambiare personalità è un solo comando sul dispositivo (`chimera-mode
 tnc|aprs|reticulum`), persistente ai riavvii — o un click nella web UI.
@@ -113,10 +113,12 @@ Python 2.7):
   bridge → seriale → sketch → radio e ritorno), boot-safe inclusi i test
   di mancanza di corrente.
 - **Digipeater + iGate**: installati e attivi su APRS-IS.
-- **Modalità Reticulum**: implementata (incluso il framing on-air di
-  RNode, verificato sul sorgente del firmware RNode) ma **non ancora
-  validata contro hardware RNode reale** — da considerare sperimentale.
-  Vedi le questioni aperte in [docs/architecture.md](docs/architecture.md).
+- **Modalità Reticulum**: **verificata in aria contro hardware RNode
+  reale** (Heltec WiFi LoRa 32 V3, SX1268, firmware RNode 1.86) —
+  traffico Reticulum bidirezionale con payload da 64/180/300 byte,
+  inclusi i pacchetti split di RNode. Restano aperti il test con una
+  board della famiglia SX1276 e le prove di accettazione con
+  MeshChat/Sideband — vedi [docs/architecture.md](docs/architecture.md).
 
 ## Riconoscimenti
 
