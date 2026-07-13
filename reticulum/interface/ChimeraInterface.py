@@ -88,6 +88,14 @@ class ChimeraInterface(Interface):
 
     def __init__(self, owner, configuration):
         super().__init__()
+        # Interface.__init__() resets self.HW_MTU to None as an INSTANCE
+        # attribute, shadowing the class attribute above. If it stays None,
+        # RNS 1.x Transport strips the MTU signalling bytes from incoming
+        # link requests (packet.data is truncated but packet.raw is not), so
+        # the responder derives a different link id than the initiator and
+        # every link proof is silently discarded — nodes hosting pages on
+        # this interface become unreachable while everything else works.
+        self.HW_MTU = ChimeraInterface.HW_MTU
         c = Interface.get_config_obj(configuration)
 
         self.owner = owner

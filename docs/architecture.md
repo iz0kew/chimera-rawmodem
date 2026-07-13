@@ -249,7 +249,10 @@ Both ends must still match: frequency, BW, SF, CR, sync word.
       mirrored in `radio_reticulum` (`0x12` / 18 symbols), see above.
 - [x] **RNS MTU 500 vs SX127x 255-byte frame limit** — resolved: RNode
       splits >254-byte packets into two framed LoRa frames; replicated in
-      `ChimeraInterface.py`, `HW_MTU = 508` confirmed correct.
+      `ChimeraInterface.py`, `HW_MTU = 508` confirmed correct. Caveat: RNS
+      `Interface.__init__()` shadows the class attribute with an instance
+      `HW_MTU = None`, which silently breaks inbound link ids on RNS 1.x;
+      `ChimeraInterface.__init__` re-asserts it (see comment in the file).
 - [ ] **CSMA/CAD channel access** — RNode senses the channel before TX,
       we do not; add CAD-based hold-off in the sketch if collisions bite.
 - [x] **AX.25 ↔ TNC2 conversion for TNC mode** — resolved: bidirectional
