@@ -374,12 +374,14 @@ class TxPacer:
 
     MAX_QUEUE = 32
     GUARD_S = 0.1
+    RX_HOLDOFF_S = 2.0
 
     def __init__(self, params, baud):
         self.params = dict(params)
         self.baud = float(baud)
         self.queue = deque()
         self.ready_at = 0.0
+        self.last_rx = 0.0
 
     def push(self, cmd, payload):
         if len(self.queue) >= self.MAX_QUEUE:
@@ -410,6 +412,16 @@ class TxPacer:
             self.params["coding_rate"] = p[0]
         elif cmd == CMD_SETPREAMBLE and len(p) == 2:
             self.params["preamble_symbols"] = struct.unpack(">H", bytes(p))[0]
+
+    def rx_seen(self, now):
+        # The modem is not ready to accept a TX frame right after an RX
+        # (still streaming the received frame + SIGREPORT up the serial and
+        # re-arming the radio): frames written in that window never reach
+        # the air. Verified on hardware 2026-07-12: locally-generated link
+        # proofs (~50-100 ms after the RX) were systematically lost, while
+        # internet-relayed replies (>=0.5 s later) went through.
+        self.last_rx = now
+        self.ready_at = max(self.ready_at, now + self.RX_HOLDOFF_S)
 
     def clear(self):
         self.queue.clear()
@@ -590,6 +602,7 @@ def main():
                     retry_at = time.time() + SERIAL_RETRY_S
                     continue
                 for cmd, payload in ser_deframer.feed(data):
+                    pacer.rx_seen(time.time())
                     if cmd == CMD_DATA:
                         if translate:
                             payload, note = rx_convert(payload)

@@ -207,6 +207,16 @@ at the single point that owns the serial port. Verified on hardware: split
 packets now pass intact in both directions (`tests/test_bridge_pacing.py`
 covers the airtime math and queue behaviour).
 
+Same root cause, RX side (found 2026-07-12): the modem is not ready to
+accept a TX frame right after a reception either — it is still streaming
+the received frame + SIGREPORT up the serial link and re-arming the radio.
+Frames written in that window never reach the air: locally-generated
+Reticulum link proofs (sent ~50–100 ms after the link request arrives) were
+systematically lost, while internet-relayed replies (≥ 0.5 s later) went
+through. The pacer therefore also holds off TX for 2 s after any frame is
+received from the modem (`TxPacer.rx_seen()`); an RX only ever extends the
+ready time, it never shortens a pending airtime wait.
+
 ## RNode interoperability (Reticulum mode)
 
 Acceptance criterion: the Dragino and a stock RNode device (any supported

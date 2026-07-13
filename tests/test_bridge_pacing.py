@@ -113,6 +113,27 @@ class TestTxPacer(unittest.TestCase):
         self.assertEqual(self.pacer.params["preamble_symbols"], 18)
         self.assertGreater(bridge.lora_airtime_s(255, self.pacer.params), base)
 
+    def test_rx_holdoff_delays_tx(self):
+        # Found on hardware 2026-07-12: frames written right after an RX
+        # never reach the air (the modem is still streaming the received
+        # frame + SIGREPORT and re-arming the radio), so link proofs to
+        # just-received link requests were systematically lost.
+        self.pacer.push(bridge.CMD_DATA, b"proof")
+        self.pacer.rx_seen(100.0)
+        self.assertIsNone(self.pacer.pop_due(100.0 + 0.1))
+        self.assertEqual(self.pacer.pop_due(100.0 + self.pacer.RX_HOLDOFF_S),
+                         (bridge.CMD_DATA, b"proof"))
+
+    def test_rx_holdoff_never_shortens_airtime_wait(self):
+        # An RX must only extend the ready time, never pull it earlier
+        # while the modem is still on the air with a previous long frame
+        # (255 B at SF12 is ~9 s, well beyond the 2 s holdoff).
+        pacer = bridge.TxPacer(APRS, 115200)
+        pacer.sent(bridge.CMD_DATA, b"x" * 255, 258, 100.0)
+        before = pacer.ready_at
+        pacer.rx_seen(100.5)
+        self.assertEqual(pacer.ready_at, before)
+
     def test_queue_cap(self):
         for _ in range(self.pacer.MAX_QUEUE):
             self.assertTrue(self.pacer.push(bridge.CMD_DATA, b"x"))
