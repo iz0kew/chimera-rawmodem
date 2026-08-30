@@ -65,8 +65,8 @@ Nessun reflash necessario.
 - Dragino **LG01-P**, versione 433MHz (non LG01-N, non LG02 — architettura
   radio diversa e incompatibile)
 - Connettività Ethernet per la funzione iGate (altrimenti opzionale)
-- Per la modalità Reticulum: un qualsiasi host in rete con RNS (PC,
-  homelab, telefono)
+- Per la modalità Reticulum: un qualsiasi host in rete con RNS ≥ 0.7.0
+  (PC, homelab, telefono) — verificato fino a RNS 1.5.2
 
 Non servono cavo USB né Arduino IDE: è inclusa un'immagine firmware
 precompilata e l'ATmega328P si flasha dal Dragino stesso.
@@ -116,9 +116,11 @@ Python 2.7):
 - **Modalità Reticulum**: **verificata in aria contro hardware RNode
   reale** (Heltec WiFi LoRa 32 V3, SX1268, firmware RNode 1.86) —
   traffico Reticulum bidirezionale con payload da 64/180/300 byte,
-  inclusi i pacchetti split di RNode. Restano aperti il test con una
-  board della famiglia SX1276 e le prove di accettazione con
-  MeshChat/Sideband — vedi [docs/architecture.md](docs/architecture.md).
+  inclusi i pacchetti split di RNode. La classe interfaccia lato host
+  (`ChimeraInterface.py`) è verificata con RNS fino alla 1.5.2, senza
+  modifiche al codice. Restano aperti il test con una board della famiglia
+  SX1276 e le prove di accettazione con MeshChat/Sideband — vedi
+  [docs/architecture.md](docs/architecture.md).
 
 ## Riconoscimenti
 
