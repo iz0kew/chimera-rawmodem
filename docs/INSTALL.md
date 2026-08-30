@@ -357,10 +357,11 @@ by hand):
   coding_rate = 5
 ```
 
-Requires RNS ≥ 0.7.0. The interface replicates RNode's on-air framing, so
-it is designed to interoperate with any device running the official RNode
-firmware on matching radio parameters — **but this has not yet been
-validated against real RNode hardware** (see project status in the README).
+Requires RNS ≥ 0.7.0 (verified through RNS 1.5.2). The interface replicates
+RNode's on-air framing, so it interoperates with any device running the
+official RNode firmware on matching radio parameters — **verified over the
+air against a stock RNode** (Heltec WiFi LoRa 32 V3, SX1268, RNode firmware
+1.86); see project status in the README.
 
 ## Step 9 (optional) — Mode switching from the web UI
 

@@ -263,6 +263,15 @@ Both ends must still match: frequency, BW, SF, CR, sync word.
       `Interface.__init__()` shadows the class attribute with an instance
       `HW_MTU = None`, which silently breaks inbound link ids on RNS 1.x;
       `ChimeraInterface.__init__` re-asserts it (see comment in the file).
+      Still required on RNS 1.5.2 — `_add_interface()` now also calls
+      `optimise_mtu()`, but that only rewrites `HW_MTU` when
+      `AUTOCONFIGURE_MTU` is true, which this class leaves off.
+- [x] **RNS 1.5.2 compatibility** — checked 2026-08-30: the external
+      interface loader (`interface_class` hook, `(owner, configuration)`
+      constructor, `get_config_obj()`), `DEFAULT_IFAC_SIZE = 8` (matches
+      `RNodeInterface`), and the `process_incoming`/`process_outgoing`
+      contract are all unchanged. `ChimeraInterface.py` loads and
+      round-trips (single + split frames) under 1.5.2 with no code change.
 - [ ] **CSMA/CAD channel access** — RNode senses the channel before TX,
       we do not; add CAD-based hold-off in the sketch if collisions bite.
 - [x] **AX.25 ↔ TNC2 conversion for TNC mode** — resolved: bidirectional

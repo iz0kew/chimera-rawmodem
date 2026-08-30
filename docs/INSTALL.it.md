@@ -360,11 +360,11 @@ suo file di config a mano):
   coding_rate = 5
 ```
 
-Richiede RNS ≥ 0.7.0. L'interfaccia replica il framing on-air di RNode,
-quindi è progettata per interoperare con qualsiasi dispositivo con firmware
-RNode ufficiale a parità di parametri radio — **ma non è ancora stata
-validata contro hardware RNode reale** (vedi lo stato del progetto nel
-README).
+Richiede RNS ≥ 0.7.0 (verificato fino a RNS 1.5.2). L'interfaccia replica
+il framing on-air di RNode, quindi interopera con qualsiasi dispositivo con
+firmware RNode ufficiale a parità di parametri radio — **verificato via
+etere contro un RNode standard** (Heltec WiFi LoRa 32 V3, SX1268, firmware
+RNode 1.86); vedi lo stato del progetto nel README.
 
 ## Passo 9 (opzionale) — Cambio modalità dalla web UI
 

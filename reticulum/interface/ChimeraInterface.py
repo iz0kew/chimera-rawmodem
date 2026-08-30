@@ -44,6 +44,9 @@
 #          coding_rate = 5
 #
 # Requires RNS >= 0.7.0 (custom interface loading from the interfaces dir).
+# Verified unchanged against RNS 1.5.2 (2026-08-30): the interface_class
+# hook, the (owner, configuration) constructor signature, get_config_obj()
+# and the HW_MTU handling below are all still current.
 
 import os
 import socket
@@ -95,6 +98,9 @@ class ChimeraInterface(Interface):
         # the responder derives a different link id than the initiator and
         # every link proof is silently discarded — nodes hosting pages on
         # this interface become unreachable while everything else works.
+        # Still required on RNS 1.5.2: _add_interface() calls optimise_mtu(),
+        # but that only touches HW_MTU when AUTOCONFIGURE_MTU is True, which
+        # this class leaves at the base-class default of False.
         self.HW_MTU = ChimeraInterface.HW_MTU
         c = Interface.get_config_obj(configuration)
 
