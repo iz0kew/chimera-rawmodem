@@ -64,7 +64,7 @@ No reflash needed.
   incompatible radio architecture)
 - Ethernet connectivity for the iGate function (optional otherwise)
 - For Reticulum mode: any host on the network running RNS ≥ 0.7.0 (PC,
-  homelab, phone) — verified through RNS 1.5.2
+  homelab, phone) — verified through RNS 1.6.0
 
 No USB cable and no Arduino IDE needed: a prebuilt firmware image is
 included and the ATmega328P is flashed from the Dragino itself.
@@ -113,9 +113,11 @@ Running in production on real hardware (factory OpenWrt Chaos Calmer
   hardware** (Heltec WiFi LoRa 32 V3, SX1268, RNode firmware 1.86) —
   bidirectional Reticulum traffic at 64/180/300-byte payloads, RNode
   split packets included. The host-side interface class (`ChimeraInterface.py`)
-  is verified against RNS through 1.5.2, no code changes needed. Testing
-  against an SX1276-family board and the MeshChat/Sideband acceptance runs
-  are still open — see [docs/architecture.md](docs/architecture.md).
+  is verified against RNS through 1.6.0, no code changes needed, and its
+  loading has been checked from source against current MeshChat (2.4.0)
+  and Sideband (2.3.0, which itself requires RNS ≥ 1.6.0); per-app setup
+  notes are in the install guide. Testing against an SX1276-family board
+  and the on-device MeshChat/Sideband acceptance runs are still open — see [docs/architecture.md](docs/architecture.md).
 
 ## Credits
 

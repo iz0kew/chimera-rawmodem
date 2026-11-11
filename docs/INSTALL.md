@@ -343,8 +343,7 @@ Copy-Item reticulum\interface\ChimeraInterface.py "$env:USERPROFILE\.reticulum\i
 ```
 
 Then add to `~/.reticulum/config` (works identically for `rnsd`, MeshChat
-and Sideband — Sideband has no interface editor UI, edit its config file
-by hand):
+and Sideband desktop — see the per-app notes below):
 
 ```ini
 [[Chimera LoRa]]
@@ -357,7 +356,29 @@ by hand):
   coding_rate = 5
 ```
 
-Requires RNS ≥ 0.7.0 (verified through RNS 1.5.2). The interface replicates
+**MeshChat:** don't use *Add Interface*: it only lists built-in types and
+would drop `target_host`/`target_port`. Use **Import Interfaces** instead
+and paste the block above, which keeps every key. Copy
+`ChimeraInterface.py` into `interfaces/` first, as shown above.
+
+**Sideband (desktop):** hand-edit the Reticulum config it uses (the path is
+shown under *Utilities → Advanced*), with `ChimeraInterface.py` in that
+directory's `interfaces/`.
+
+**Sideband (Android):** the Reticulum config is regenerated at every start,
+so neither file can be placed by hand:
+
+1. *Plugins*: enable plugins, *Select Plugins Directory* (somewhere in
+   shared storage), and put `ChimeraInterface.py` in an `interfaces/`
+   subfolder of it. Sideband copies it into its Reticulum config at start.
+2. *Utilities → Advanced*: *Copy Configuration*, append the
+   `[[Chimera LoRa]]` block under `[interfaces]`, *Paste Configuration*.
+3. Restart Sideband **twice**. On the first start after setting the plugins
+   directory, Sideband 2.3.0 fails to copy the module (an upstream bug); the
+   second start works.
+
+Requires RNS ≥ 0.7.0 (verified through RNS 1.6.0; current Sideband 2.3.0
+itself requires ≥ 1.6.0). The interface replicates
 RNode's on-air framing, so it interoperates with any device running the
 official RNode firmware on matching radio parameters — **verified over the
 air against a stock RNode** (Heltec WiFi LoRa 32 V3, SX1268, RNode firmware

@@ -346,8 +346,7 @@ Copy-Item reticulum\interface\ChimeraInterface.py "$env:USERPROFILE\.reticulum\i
 ```
 
 Poi aggiungi a `~/.reticulum/config` (identico per `rnsd`, MeshChat e
-Sideband — Sideband non ha un editor di interfacce nella UI, modifica il
-suo file di config a mano):
+Sideband desktop — vedi le note per le singole app più sotto):
 
 ```ini
 [[Chimera LoRa]]
@@ -360,7 +359,30 @@ suo file di config a mano):
   coding_rate = 5
 ```
 
-Richiede RNS ≥ 0.7.0 (verificato fino a RNS 1.5.2). L'interfaccia replica
+**MeshChat:** non usare *Add Interface*: elenca solo i tipi integrati e
+scarterebbe `target_host`/`target_port`. Usa invece **Import Interfaces**
+e incolla il blocco qui sopra, che mantiene tutte le chiavi. Prima copia
+`ChimeraInterface.py` in `interfaces/` come indicato sopra.
+
+**Sideband (desktop):** modifica a mano il config Reticulum che usa (il
+percorso è indicato in *Utilities → Advanced*), con `ChimeraInterface.py`
+nella cartella `interfaces/` di quella directory.
+
+**Sideband (Android):** il config Reticulum viene rigenerato a ogni avvio,
+quindi nessuno dei due file si può mettere a mano:
+
+1. *Plugins*: abilita i plugin, *Select Plugins Directory* (in una cartella
+   della memoria condivisa) e metti `ChimeraInterface.py` in una
+   sottocartella `interfaces/` di quella directory. Sideband lo copia nel
+   suo config Reticulum all'avvio.
+2. *Utilities → Advanced*: *Copy Configuration*, aggiungi il blocco
+   `[[Chimera LoRa]]` sotto `[interfaces]`, *Paste Configuration*.
+3. Riavvia Sideband **due volte**. Al primo avvio dopo aver impostato la
+   cartella dei plugin, Sideband 2.3.0 non riesce a copiare il modulo (un
+   bug a monte); al secondo avvio funziona.
+
+Richiede RNS ≥ 0.7.0 (verificato fino a RNS 1.6.0; l'attuale Sideband 2.3.0
+richiede di suo ≥ 1.6.0). L'interfaccia replica
 il framing on-air di RNode, quindi interopera con qualsiasi dispositivo con
 firmware RNode ufficiale a parità di parametri radio — **verificato via
 etere contro un RNode standard** (Heltec WiFi LoRa 32 V3, SX1268, firmware

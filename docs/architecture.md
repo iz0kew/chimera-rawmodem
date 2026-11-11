@@ -263,7 +263,7 @@ Both ends must still match: frequency, BW, SF, CR, sync word.
       `Interface.__init__()` shadows the class attribute with an instance
       `HW_MTU = None`, which silently breaks inbound link ids on RNS 1.x;
       `ChimeraInterface.__init__` re-asserts it (see comment in the file).
-      Still required on RNS 1.5.2 — `_add_interface()` now also calls
+      Still required on RNS 1.6.0 — `_add_interface()` now also calls
       `optimise_mtu()`, but that only rewrites `HW_MTU` when
       `AUTOCONFIGURE_MTU` is true, which this class leaves off.
 - [x] **RNS 1.5.2 compatibility** — checked 2026-08-30: the external
@@ -272,6 +272,17 @@ Both ends must still match: frequency, BW, SF, CR, sync word.
       `RNodeInterface`), and the `process_incoming`/`process_outgoing`
       contract are all unchanged. `ChimeraInterface.py` loads and
       round-trips (single + split frames) under 1.5.2 with no code change.
+- [x] **RNS 1.6.0 compatibility** — checked 2026-11-11 by diffing 1.5.2 →
+      1.6.0 and running the class inside a live 1.6.0 instance against a
+      mock bridge. Loader, `inbound()`, the ingress MTU check and the
+      link-request MTU clamping are unchanged; `Interface` only gained
+      additive members (`teardown()`, `destination_cost`/`pr_cost`,
+      `hop_limiter_hits`). Announces out (split 255+214) and in (single
+      172 B, split 487 B) round-trip, peer path learned, zero protocol
+      violations. New opt-in 1.6.0 features (network stamps, `[filter]`,
+      runtime interface attach/detach) work above the interface layer;
+      runtime detach just calls our `detach()`, which ends the reconnect
+      loop.
 - [ ] **CSMA/CAD channel access** — RNode senses the channel before TX,
       we do not; add CAD-based hold-off in the sketch if collisions bite.
 - [x] **AX.25 ↔ TNC2 conversion for TNC mode** — resolved: bidirectional
@@ -288,5 +299,28 @@ Both ends must still match: frequency, BW, SF, CR, sync word.
       payloads in both directions incl. split packets, RSSI ≈ -55 dBm /
       SNR ≈ 12 dB on the bench. Still open: an SX1276/78-based board.
 - [ ] Verify `python3-light` availability on the actual Dragino 18.06 feed.
-- [ ] Confirm RNS custom-interface loading against the RNS versions bundled
-      by current MeshChat and Sideband releases.
+- [x] Confirm RNS custom-interface loading against the RNS versions bundled
+      by current MeshChat and Sideband releases — **checked from source
+      2026-11-11** (on-device acceptance runs still open, see below):
+      - **Sideband 2.3.0** requires `rns>=1.6.0` (verified above) and builds
+        a stock `RNS.Reticulum(configdir=...)`, so `<configdir>/interfaces/`
+        loading applies. Desktop: plain `~/.reticulum`-style config, edited
+        by hand. Android: the config is **regenerated at every start** from
+        the template in *Utilities → Advanced* (Copy/Paste Configuration),
+        and custom interface modules are copied at start from
+        `<plugins dir>/interfaces/*.py` (*Plugins → Select Plugins
+        Directory*). Upstream quirk: on the very first start after setting
+        the plugins dir, the copy fails (`shutil` imported only on the
+        branch where the interfaces dir already exists) — restart once.
+      - **MeshChat 2.4.0** (latest release, 2026-07-06) requires
+        `rns>=1.3.7`; the packaged app freezes an RNS older than 1.5.0
+        (released 2026-08-22), a source install pulls 1.6.0. It instantiates
+        `RNS.Reticulum(reticulum_config_dir)` normally, so hand-editing
+        works. The **Add Interface** editor offers only built-in types and,
+        for an unknown type, saves just the common fields (`target_host` /
+        `target_port` would be dropped); **Import Interfaces** keeps every
+        key, so pasting the `[[Chimera LoRa]]` block there works.
+        `ChimeraInterface.py` still has to be copied to the config dir's
+        `interfaces/` by hand.
+- [ ] MeshChat / Sideband (desktop + Android) on-device acceptance runs
+      (brief §4.3.2).

@@ -29,8 +29,10 @@
 # for rnsd, MeshChat and Sideband, which all read the same config format):
 #
 #   1. copy this file to ~/.reticulum/interfaces/ChimeraInterface.py
-#   2. add to ~/.reticulum/config (or via MeshChat's Interface Editor;
-#      Sideband needs the config file edited by hand):
+#   2. add to ~/.reticulum/config (in MeshChat use "Import Interfaces" and
+#      paste this block — its "Add Interface" form drops the custom keys;
+#      Sideband desktop: edit the config by hand; Sideband Android: see
+#      docs/INSTALL.md, the config there comes from an in-app template):
 #
 #        [[Chimera LoRa]]
 #          type = ChimeraInterface
@@ -44,9 +46,12 @@
 #          coding_rate = 5
 #
 # Requires RNS >= 0.7.0 (custom interface loading from the interfaces dir).
-# Verified unchanged against RNS 1.5.2 (2026-08-30): the interface_class
-# hook, the (owner, configuration) constructor signature, get_config_obj()
-# and the HW_MTU handling below are all still current.
+# Verified unchanged through RNS 1.6.0 (2026-11-11; previously 1.5.2 on
+# 2026-08-30): the interface_class hook, the (owner, configuration)
+# constructor signature, get_config_obj() and the HW_MTU handling below are
+# all still current. 1.6.0's additions to the Interface base class
+# (teardown(), destination/PR stamp costs, hop limiter) are additive with
+# working defaults and need nothing from this class.
 
 import os
 import socket
@@ -98,7 +103,7 @@ class ChimeraInterface(Interface):
         # the responder derives a different link id than the initiator and
         # every link proof is silently discarded — nodes hosting pages on
         # this interface become unreachable while everything else works.
-        # Still required on RNS 1.5.2: _add_interface() calls optimise_mtu(),
+        # Still required on RNS 1.6.0: _add_interface() calls optimise_mtu(),
         # but that only touches HW_MTU when AUTOCONFIGURE_MTU is True, which
         # this class leaves at the base-class default of False.
         self.HW_MTU = ChimeraInterface.HW_MTU
